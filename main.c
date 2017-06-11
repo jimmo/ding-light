@@ -31,7 +31,7 @@
 // RA1 -- ICSPCLK
 // RA2 -- Button (LOW=pressed)
 // RA3 -- ~MCLR
-// RA4 -- Battery sense (Vbatt/2)
+// RA4 -- Battery sense (Vbatt/2)  (AN3)
 // RA5 -- Low when charging? High otherwise.
 // RC0 -- Down LEDs
 // RC1 -- Green LED
@@ -55,9 +55,10 @@ void main(void) {
     // high-z button
     TRISAbits.TRISA2 = 1;
     ANSELAbits.ANSA2 = 0;
-    // high-z, analog batt sense
+    // high-z, analog, no-pull-up batt sense
     TRISAbits.TRISA4 = 1;
     ANSELAbits.ANSA4 = 1;
+    WPUAbits.WPUA4 = 0;
     // high-z charge sense
     TRISAbits.TRISA5 = 1;
     
@@ -77,6 +78,32 @@ void main(void) {
     LATCbits.LATC4 = 0;
     LATCbits.LATC5 = 0;
     
+    // Front LED PWM
+    PWM1CONbits.PWM1EN = 0;
+    PWM1CONbits.PWM1OE = 0;
+    PWM1DCLbits.PWM1DCL = 0;
+    PWM1DCHbits.PWM1DCH = 0;
+    // Reset Timer2
+    T2CON = 0;
+    PR2bits.PR2 = PWM_PERIOD - 1;
+    PIR1bits.TMR2IF = 0;
+    T2CONbits.T2CKPS = 0b11; // 64:1
+    T2CONbits.TMR2ON = 1;
+    while (PIR1bits.TMR2IF == 0);
+    
+    // Disable ADC interrupt.
+    PIE1bits.ADIE = 0;
+    // Use fRC for ADC clock.
+    ADCON1bits.ADCS = 0b111;
+    // Configure voltage reference using VDD
+    ADCON1bits.ADPREF = 0;
+    // Select ADC input channel (RA4/AN3)
+    ADCON0bits.CHS = 0b00011;
+    // Select result format right justified
+    ADCON1bits.ADFM = 1;
+    // Turn on ADC module
+    ADCON0bits.ADON = 1;
+    
     // Power on / reset indication.
     LATCbits.LATC1 = 1;
     LATCbits.LATC2 = 1;
@@ -88,22 +115,10 @@ void main(void) {
     LATCbits.LATC3 = 0;
     LATCbits.LATC4 = 0;
     
-    // Front LED PWM
-    PWM1CONbits.PWM1EN = 1;
-    PWM1CONbits.PWM1OE = 1;
-    PWM1DCLbits.PWM1DCL = 0;
-    PWM1DCHbits.PWM1DCH = 0;
-    // Reset Timer2
-    T2CON = 0;
-    PR2bits.PR2 = PWM_PERIOD - 1;
-    PIR1bits.TMR2IF = 0;
-    T2CONbits.T2CKPS = 0b11; // 64:1
-    T2CONbits.TMR2ON = 1;
-    while (PIR1bits.TMR2IF == 0);
-    
     uint16_t counter = 0;
     uint8_t button_down = 0;
     uint8_t power_mode = 0;
+    uint8_t dim_mode = 0;
     
     while (1) {
         __delay_ms(10);
@@ -141,7 +156,8 @@ void main(void) {
                         power_mode = 2;
                         PWM1CONbits.PWM1EN = 1;
                         PWM1CONbits.PWM1OE = 1;
-                        LATCbits.LATC0 = 1;  // Down
+                        LATCbits.LATC0 = 0;  // Down
+                        dim_mode = 0;
                     } else if (power_mode == 2) {
                         power_mode = 3;
                     } else if (power_mode == 3) {
@@ -161,9 +177,11 @@ void main(void) {
             }
             
             if (power_mode == 0) {
+                LATCbits.LATC2 = 0;  // Red
                 LATCbits.LATC3 = 0;  // Orange
                 LATCbits.LATC4 = 0;  // Blue
             } else if (power_mode == 1) {
+                LATCbits.LATC2 = 0;  // Red
                 LATCbits.LATC3 = 0;  // Orange
                 LATCbits.LATC4 = 1;  // Blue
                 if (counter > 100) {
@@ -171,14 +189,32 @@ void main(void) {
                     counter = 0;
                 }
             } else if (power_mode == 2) {
+                LATCbits.LATC2 = dim_mode;  // Red
                 LATCbits.LATC3 = 1;  // Orange
                 LATCbits.LATC4 = 0;  // Blue
-                uint16_t b = counter % (PWM_PERIOD * 3) + PWM_PERIOD;
+                uint16_t b = PWM_PERIOD;// counter % (PWM_PERIOD * 3) + PWM_PERIOD;
+                if (dim_mode) {
+                    b /= 4;
+                }
                 PIR1bits.TMR2IF = 0;
                 while (PIR1bits.TMR2IF == 0);
                 PWM1DCLbits.PWM1DCL = b & 0x3;
                 PWM1DCHbits.PWM1DCH = b >> 2;
+                
+                if (counter % 100 == 0) {
+                    ADCON0bits.GO_nDONE = 1;
+                    while (ADCON0bits.GO_nDONE == 1);
+                    uint16_t vbat = ADRESH;
+                    vbat <<= 2;
+                    vbat |= ADRESL;
+                    PIR1bits.ADIF = 0;
+                    
+                    if (vbat < 120) {
+                        dim_mode += 1;
+                    }
+                }
             } else if (power_mode == 3) {
+                LATCbits.LATC2 = dim_mode;  // Red
                 LATCbits.LATC3 = 0;  // Orange
                 LATCbits.LATC4 = 1;  // Blue
                 if (counter > 100) {
