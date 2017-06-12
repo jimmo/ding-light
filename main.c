@@ -22,13 +22,11 @@
 #include <stdint.h>
 
 // TODO:
-// Battery sense.
-// Sleep mode.
-// Better front light flash pattern.
-// Detect full battery (RA5 goes high again?).
+// Detect full battery (RA5 goes high again??). Need to measure this.
 
-// RA0 -- ICSPDAT
-// RA1 -- ICSPCLK
+
+// RA0 -- ICSPDAT   (Not sure if used for anything other than programming)
+// RA1 -- ICSPCLK   (Same)
 // RA2 -- Button (LOW=pressed)
 // RA3 -- ~MCLR
 // RA4 -- Battery sense (Vbatt/2)  (AN3)
@@ -104,6 +102,16 @@ void main(void) {
     // Turn on ADC module
     ADCON0bits.ADON = 1;
     
+    // Low-power-sleep-mode enabled in sleep.
+    VREGCONbits.VREGPM = 1;
+    // Enable pin interrupts on port a.
+    INTCONbits.IOCIE = 1;
+    // Enable rising (P) and falling (N) edge interrupts on A2 (button) & A5 (charge).
+    IOCANbits.IOCAN2 = 1;
+    IOCAPbits.IOCAP2 = 1;
+    IOCANbits.IOCAN5 = 1;
+    IOCAPbits.IOCAP5 = 1;
+    
     ADCON0bits.GO_nDONE = 1;
     while (ADCON0bits.GO_nDONE == 1);
     PIR1bits.ADIF = 0;
@@ -119,11 +127,28 @@ void main(void) {
     LATCbits.LATC3 = 0;
     LATCbits.LATC4 = 0;
     
+    // Used to track time. Increments every 10ms. Mode transitions reset to 0.
     uint16_t counter = 0;
+    
+    // To detect button transitions.
     int8_t button_down = 0;
+    
+    // Current operating mode.
+    //  0 = off / idle
+    //  1 = waiting for second button press
+    //  2 = on
+    //  3 = waiting for second button press
     int8_t power_mode = 0;
+    
+    // Number of times we've sensed low voltage in a row.
     int8_t bat_counter = 0;
+    
+    // We hit the low voltage threshold.
     int8_t dim_mode = 0;
+    
+    // Lighting mode.
+    // In night mode, enable the down light.
+    // In day mode, do two short flashes.
     int8_t night_mode = 1;
     
     while (1) {
@@ -197,6 +222,8 @@ void main(void) {
                 PWM1CONbits.PWM1OE = 0;
                 LATCbits.LATC0 = 0;  // Down
                 LATCbits.LATC5 = 0;  // Front
+                
+                SLEEP();
             } else if (power_mode == 1) {
                 // Ready to turn on (single press, waiting for a second press).
                 LATCbits.LATC2 = 0;  // Red
