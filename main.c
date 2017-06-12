@@ -120,11 +120,11 @@ void main(void) {
     LATCbits.LATC4 = 0;
     
     uint16_t counter = 0;
-    uint8_t button_down = 0;
-    uint8_t power_mode = 0;
-    uint8_t bat_counter = 0;
-    uint8_t dim_mode = 0;
-    uint8_t night_mode = 1;
+    int8_t button_down = 0;
+    int8_t power_mode = 0;
+    int8_t bat_counter = 0;
+    int8_t dim_mode = 0;
+    int8_t night_mode = 1;
     
     while (1) {
         __delay_ms(10);
@@ -176,7 +176,7 @@ void main(void) {
                 } else {
                     // If the button is held down for one second, toggle day/night.
                     if (counter > 100 && power_mode == 3) {
-                        night_mode = !night_mode;
+                        night_mode = 1 - night_mode;
                         power_mode = 2;
                     }
                 }
@@ -267,13 +267,13 @@ void main(void) {
                     vbat |= ADRESL;
                     PIR1bits.ADIF = 0;
                     
-                    if (vbat < 540) {
+                    if (vbat < 580) {
                         // Below 3.55V -- turn off.
                         power_mode = 0;
-                    } else if (vbat < 566) {
-                        // Below 3.65V. If we get 10 in a row, low power mode.
+                    } else if (vbat < 630) {
+                        // Below 3.65V. If we get 5 in a row, low power mode.
                         bat_counter++;
-                        if (bat_counter > 10) {
+                        if (bat_counter > 5) {
                             // Latch dim_mode.
                             dim_mode = 1;
                         }
