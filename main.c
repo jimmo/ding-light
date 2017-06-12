@@ -223,7 +223,16 @@ void main(void) {
                 LATCbits.LATC0 = 0;  // Down
                 LATCbits.LATC5 = 0;  // Front
                 
+                ADCON0bits.ADON = 0;
+                T1CONbits.TMR1ON = 0;
+                IOCAFbits.IOCAF2 = 0;
+                IOCAFbits.IOCAF5 = 0;
                 SLEEP();
+                NOP();
+                NOP();
+                NOP();
+                T1CONbits.TMR1ON = 1;
+                ADCON0bits.ADON = 1;
             } else if (power_mode == 1) {
                 // Ready to turn on (single press, waiting for a second press).
                 LATCbits.LATC2 = 0;  // Red
