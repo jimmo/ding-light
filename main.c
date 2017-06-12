@@ -104,7 +104,11 @@ void main(void) {
     // Turn on ADC module
     ADCON0bits.ADON = 1;
     
-    // Power on / reset indication.
+    ADCON0bits.GO_nDONE = 1;
+    while (ADCON0bits.GO_nDONE == 1);
+    PIR1bits.ADIF = 0;
+    
+    // Flash all the LEDs for a power on / reset indication.
     LATCbits.LATC1 = 1;
     LATCbits.LATC2 = 1;
     LATCbits.LATC3 = 1;
@@ -118,7 +122,9 @@ void main(void) {
     uint16_t counter = 0;
     uint8_t button_down = 0;
     uint8_t power_mode = 0;
+    uint8_t bat_counter = 0;
     uint8_t dim_mode = 0;
+    uint8_t night_mode = 1;
     
     while (1) {
         __delay_ms(10);
@@ -128,14 +134,16 @@ void main(void) {
             // Charging - turn off lights and flash Green LED at 0.5 Hz.
             power_mode = 0;
             
+            // Turn off everything.
             PWM1CONbits.PWM1EN = 0;
             PWM1CONbits.PWM1OE = 0;
-            
             LATCbits.LATC0 = 0;  // Down
+            LATCbits.LATC2 = 0;  // Red
             LATCbits.LATC3 = 0;  // Orange
             LATCbits.LATC4 = 0;  // Blue
             LATCbits.LATC5 = 0;  // Front
             
+            // Flash green.
             if (counter > 200) {
                 LATCbits.LATC1 = 0;  // Green
                 counter = 0;
@@ -143,87 +151,151 @@ void main(void) {
                 LATCbits.LATC1 = 1;  // Green
             }
         } else {
-            // Not charging.
+            // Not charging - turn off green LED.
             LATCbits.LATC1 = 0;  // Green
             
             // Detect off->on button sequences.
             if (PORTAbits.RA2 == 0) {
                 if (!button_down) {
-                    // Advance through the modes.
+                    // Up->down transition: Advance through the modes.
                     if (power_mode == 0) {
                         power_mode = 1;
                     } else if (power_mode == 1) {
                         power_mode = 2;
-                        PWM1CONbits.PWM1EN = 1;
-                        PWM1CONbits.PWM1OE = 1;
-                        LATCbits.LATC0 = 0;  // Down
                         dim_mode = 0;
+                        bat_counter = 0;
                     } else if (power_mode == 2) {
                         power_mode = 3;
                     } else if (power_mode == 3) {
                         power_mode = 0;
-                        PWM1CONbits.PWM1EN = 0;
-                        PWM1CONbits.PWM1OE = 0;
-                        LATCbits.LATC0 = 0;  // Down
-                        LATCbits.LATC5 = 0;  // Front
                     }
                     
                     counter = 0;
+                    
+                    button_down = 1;
+                } else {
+                    // If the button is held down for one second, toggle day/night.
+                    if (counter > 100 && power_mode == 3) {
+                        night_mode = !night_mode;
+                        power_mode = 2;
+                    }
                 }
-                
-                button_down = 1;
             } else {
-                button_down = 0;
+                if (button_down) {
+                    // Down-up transition.
+                    button_down = 0;
+                }
             }
             
+            // Do the appropriate thing for the current mode.
             if (power_mode == 0) {
+                // Off.
                 LATCbits.LATC2 = 0;  // Red
                 LATCbits.LATC3 = 0;  // Orange
                 LATCbits.LATC4 = 0;  // Blue
+                PWM1CONbits.PWM1EN = 0;
+                PWM1CONbits.PWM1OE = 0;
+                LATCbits.LATC0 = 0;  // Down
+                LATCbits.LATC5 = 0;  // Front
             } else if (power_mode == 1) {
+                // Ready to turn on (single press, waiting for a second press).
                 LATCbits.LATC2 = 0;  // Red
                 LATCbits.LATC3 = 0;  // Orange
                 LATCbits.LATC4 = 1;  // Blue
+                PWM1CONbits.PWM1EN = 0;
+                PWM1CONbits.PWM1OE = 0;
+                LATCbits.LATC0 = 0;  // Down
+                LATCbits.LATC5 = 0;  // Front
                 if (counter > 100) {
+                    // Abandon waiting.
                     power_mode = 0;
                     counter = 0;
                 }
             } else if (power_mode == 2) {
+                // On mode.
                 LATCbits.LATC2 = dim_mode;  // Red
                 LATCbits.LATC3 = 1;  // Orange
                 LATCbits.LATC4 = 0;  // Blue
-                uint16_t b = PWM_PERIOD;// counter % (PWM_PERIOD * 3) + PWM_PERIOD;
-                if (dim_mode) {
-                    b /= 4;
+                PWM1CONbits.PWM1EN = 1;
+                PWM1CONbits.PWM1OE = 1;
+                
+                uint16_t b = 0;
+                if (night_mode) {
+                    if (dim_mode) {
+                        // Night, low batt. forward-flash, down-flash, dim-forward.
+                        if (counter % 83 < 7) {
+                            LATCbits.LATC0 = 1;  // Down
+                            b = PWM_PERIOD / 2;
+                        } else if (counter % 83 < 14) {
+                            LATCbits.LATC0 = 0;  // Down
+                            b = PWM_PERIOD * 2;
+                        } else {
+                            LATCbits.LATC0 = 0;  // Down
+                            b = PWM_PERIOD / 2;
+                        }
+                    } else {
+                        // Night, normal. Down on, pulse front.
+                        LATCbits.LATC0 = 1;  // Down
+                        b = counter % (PWM_PERIOD * 3) + PWM_PERIOD;
+                    }
+                } else {
+                    // Day mode. Forward double-flash only.
+                    LATCbits.LATC0 = 0;  // Down
+                    if (counter % 97 < 11) {
+                        b = PWM_PERIOD;
+                    } else if (counter % 97 < 16) {
+                        b = 0;
+                    } else if (counter % 97 < 27) {
+                        b = PWM_PERIOD;
+                    } else {
+                        b = 0;
+                    }
                 }
+                
+                // Set PWM duty cycle based on brightness.
                 PIR1bits.TMR2IF = 0;
                 while (PIR1bits.TMR2IF == 0);
                 PWM1DCLbits.PWM1DCL = b & 0x3;
                 PWM1DCHbits.PWM1DCH = b >> 2;
                 
+                // Every second, measure the battery voltage.
                 if (counter % 100 == 0) {
                     ADCON0bits.GO_nDONE = 1;
                     while (ADCON0bits.GO_nDONE == 1);
                     uint16_t vbat = ADRESH;
-                    vbat <<= 2;
+                    vbat <<= 8;
                     vbat |= ADRESL;
                     PIR1bits.ADIF = 0;
                     
-                    if (vbat < 120) {
-                        dim_mode += 1;
+                    if (vbat < 540) {
+                        // Below 3.55V -- turn off.
+                        power_mode = 0;
+                    } else if (vbat < 566) {
+                        // Below 3.65V. If we get 10 in a row, low power mode.
+                        bat_counter++;
+                        if (bat_counter > 10) {
+                            // Latch dim_mode.
+                            dim_mode = 1;
+                        }
+                    } else {
+                        // Good voltage, reset counter.
+                        bat_counter = 0;
                     }
                 }
             } else if (power_mode == 3) {
+                // Ready to turn off, waiting for second press.
                 LATCbits.LATC2 = dim_mode;  // Red
                 LATCbits.LATC3 = 0;  // Orange
                 LATCbits.LATC4 = 1;  // Blue
                 if (counter > 100) {
+                    // Abandon waiting.
                     power_mode = 2;
                     counter = 0;
                 }
             }
         }
         
+        // Time forward by 10ms.
         counter += 1;
     }
     return;
